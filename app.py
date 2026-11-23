@@ -152,7 +152,6 @@ def main():
     listener = get_listener()
     mqtt_lux, last_ts, mqtt_ok = listener.snapshot()
 
-    # Main center controls (no sidebar)
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
     with ctrl_col1:
         mode = st.selectbox("Operating Mode", MODES, index=0)
@@ -178,7 +177,16 @@ def main():
 
     if "history" not in st.session_state:
         st.session_state.history = deque(maxlen=120)
-    st.session_state.history.append(active_lux)
+    if "last_recorded_ts" not in st.session_state:
+        st.session_state.last_recorded_ts = None
+
+    # Record history on new MQTT packets or when in manual mode
+    if fresh_mqtt:
+        if last_ts != st.session_state.last_recorded_ts:
+            st.session_state.history.append(active_lux)
+            st.session_state.last_recorded_ts = last_ts
+    else:
+        st.session_state.history.append(active_lux)
 
     if "alert_pulse" not in st.session_state:
         st.session_state.alert_pulse = 0
@@ -235,6 +243,11 @@ def main():
 
     st.subheader("Recent Illuminance Trend")
     st.line_chart(list(st.session_state.history))
+
+    # Auto-refresh every 2 seconds when Live MQTT is active so new packets appear automatically
+    if live_mqtt:
+        time.sleep(2.0)
+        st.rerun()
 
 
 if __name__ == "__main__":
