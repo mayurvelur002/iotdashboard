@@ -196,6 +196,7 @@ def create_dual_threshold_gauge(value, cabin_thresh, lab_thresh):
         go.Indicator(
             mode="gauge+number",
             value=safe_value,
+            domain={"x": [0.08, 0.92], "y": [0.18, 0.88]},
             title={
                 "text": (
                     f"ILLUMINATION LEVEL "
@@ -203,7 +204,10 @@ def create_dual_threshold_gauge(value, cabin_thresh, lab_thresh):
                 ),
                 "font": {"size": 14, "color": "#dcecff"},
             },
-            number={"suffix": " lux", "font": {"size": 28, "color": "#f4faff"}},
+            number={
+                "suffix": " lux",
+                "font": {"size": 28, "color": "#f4faff"},
+            },
             gauge={
                 "axis": {"range": [0, MAX_SCALE_LUX], "tickcolor": "#8fa9c5"},
                 "bar": {"color": bar_color, "thickness": 0.25},
@@ -223,24 +227,12 @@ def create_dual_threshold_gauge(value, cabin_thresh, lab_thresh):
             },
         )
     )
-    figure.add_annotation(
-        x=0.5,
-        y=0.06,
-        xref="paper",
-        yref="paper",
-        showarrow=False,
-        text=(
-            f"<span style='color:{CYAN}'>● Cabin Threshold: {cabin_thresh} lux</span>  |  "
-            f"<span style='color:{PURPLE}'>● Lab Threshold: {lab_thresh} lux</span>"
-        ),
-        font={"size": 12, "color": "#dcecff"},
-    )
     figure.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=290,
-        margin={"t": 50, "b": 25, "l": 20, "r": 20},
+        height=275,
+        margin={"t": 45, "b": 15, "l": 20, "r": 20},
         font={"color": "#dcecff"},
     )
     return figure
@@ -420,9 +412,13 @@ with st.container(border=True):
         use_container_width=True,
         config={"displayModeBar": False},
     )
-    st.caption(
-        f"Cyan marker = Aircraft Cabin threshold ({CABIN_THRESHOLD} lux) · "
-        f"Purple marker = Aerospace Laboratory threshold ({LAB_THRESHOLD} lux)"
+    st.markdown(
+        f"<div style='text-align:center;font-size:0.88rem;color:#dcecff;padding-bottom:6px;'>"
+        f"<span style='color:{CYAN};font-weight:600;'>● Aircraft Cabin Threshold: {CABIN_THRESHOLD} lux</span>"
+        f" &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"<span style='color:{PURPLE};font-weight:600;'>● Aerospace Laboratory Threshold: {LAB_THRESHOLD} lux</span>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
 
 # -------------------- EMERGENCY PANEL --------------------
