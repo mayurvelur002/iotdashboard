@@ -22,7 +22,7 @@ st.set_page_config(
     page_title="Aerospace Illumination Monitoring System",
     page_icon="✈️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ------------------------- THEME -------------------------
@@ -41,15 +41,10 @@ st.markdown(
           linear-gradient(135deg, #050d18 0%, #091626 55%, #07111f 100%);
         color: #edf6ff;
     }
-    [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stHeader"], [data-testid="stSidebar"] { display: none; }
     .block-container { padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1600px; }
     h1, h2, h3 { color: #f3f8ff !important; }
     p, label, .stCaption { color: #b9c9dc; }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0b1b2d, #071321);
-        border-right: 1px solid rgba(34,211,238,.25);
-    }
-    [data-testid="stSidebar"] * { color: #dcecff; }
     div[data-testid="stMetric"] {
         background: linear-gradient(145deg, rgba(16,36,58,.96), rgba(9,25,42,.96));
         border: 1px solid rgba(34,211,238,.32);
@@ -84,7 +79,7 @@ st.markdown(
         padding: 18px 22px; border: 1px solid rgba(34,211,238,.35);
         border-radius: 16px;
         background: linear-gradient(105deg, rgba(12,34,55,.98), rgba(15,24,49,.94));
-        box-shadow: 0 0 24px rgba(34,211,238,.07); margin-bottom: 18px;
+        box-shadow: 0 0 24px rgba(34,211,238,.07); margin-bottom: 14px;
     }
     .hero-title { font-size: 1.65rem; font-weight: 800; color: #f4faff; }
     .hero-sub { color: #a9bfd5; font-size: .9rem; margin-top: 3px; }
@@ -94,8 +89,8 @@ st.markdown(
 )
 
 # ---------------------- CONSTANTS -----------------------
-CABIN_THRESHOLD = 100
-LAB_THRESHOLD = 300
+ILLUMINATION_THRESHOLD = 200
+MAX_SCALE_LUX = 1000
 CYAN = "#22d3ee"
 PURPLE = "#c084fc"
 GREEN = "#34d399"
@@ -105,7 +100,7 @@ RED = "#fb7185"
 defaults = {
     "history": [],
     "alert_log": [],
-    "previous_alerts": [],
+    "previous_alert": None,
     "alarm_muted": False,
 }
 for key, default_value in defaults.items():
@@ -135,23 +130,21 @@ def create_alarm_sound():
     return audio_buffer.getvalue()
 
 
-def detect_anomaly(cabin_value, lab_value):
-    threshold_anomaly = (
-        cabin_value < CABIN_THRESHOLD or lab_value < LAB_THRESHOLD
-    )
+def detect_anomaly(illumination_value):
+    threshold_anomaly = illumination_value < ILLUMINATION_THRESHOLD
     ml_anomaly = False
 
     history = st.session_state.history
     if len(history) >= 10:
         training_df = pd.DataFrame(history)
-        training_data = training_df[["Aircraft Cabin", "Laboratory"]].values
+        training_data = training_df[["Illumination"]].values
         model = IsolationForest(
             n_estimators=100,
             contamination=0.1,
             random_state=42,
         )
         model.fit(training_data)
-        ml_anomaly = model.predict([[cabin_value, lab_value]])[0] == -1
+        ml_anomaly = model.predict([[illumination_value]])[0] == -1
 
     return {
         "threshold_anomaly": threshold_anomaly,
@@ -168,8 +161,13 @@ def style_plot(figure, height=320):
         font={"color": "#dcecff", "family": "Inter"},
         margin={"l": 18, "r": 18, "t": 55, "b": 18},
         height=height,
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02,
-                "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
         title_font={"size": 15, "color": "#edf6ff"},
     )
     figure.update_xaxes(gridcolor="rgba(148,170,195,.13)")
@@ -178,7 +176,7 @@ def style_plot(figure, height=320):
 
 
 def create_gauge(value, title, threshold, accent):
-    safe_value = max(0, min(float(value), 1000))
+    safe_value = max(0, min(float(value), MAX_SCALE_LUX))
     bar_color = GREEN if value >= threshold else RED
     figure = go.Figure(
         go.Indicator(
@@ -187,14 +185,14 @@ def create_gauge(value, title, threshold, accent):
             title={"text": title, "font": {"size": 15, "color": "#dcecff"}},
             number={"suffix": " lux", "font": {"size": 27, "color": "#f4faff"}},
             gauge={
-                "axis": {"range": [0, 1000], "tickcolor": "#8fa9c5"},
+                "axis": {"range": [0, MAX_SCALE_LUX], "tickcolor": "#8fa9c5"},
                 "bar": {"color": bar_color, "thickness": 0.24},
                 "bgcolor": "#10243a",
                 "borderwidth": 1,
                 "bordercolor": "rgba(34,211,238,.25)",
                 "steps": [
                     {"range": [0, threshold], "color": "rgba(251,113,133,.18)"},
-                    {"range": [threshold, 1000], "color": "rgba(52,211,153,.12)"},
+                    {"range": [threshold, MAX_SCALE_LUX], "color": "rgba(52,211,153,.12)"},
                 ],
                 "threshold": {
                     "line": {"color": accent, "width": 3},
@@ -208,222 +206,180 @@ def create_gauge(value, title, threshold, accent):
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=260,
+        height=270,
         margin={"t": 45, "b": 10, "l": 20, "r": 20},
         font={"color": "#dcecff"},
     )
     return figure
 
 
-# ------------------- SIDEBAR + INPUTS -------------------
+# --------------------- AUTO REFRESH ----------------------
 st_autorefresh(interval=5000, limit=None, key="aero_refresh")
 
-st.sidebar.markdown("## ✈️ Aerospace Illumination Monitoring")
-st.sidebar.caption("Aerospace illumination monitoring")
-st.sidebar.markdown("---")
-st.sidebar.markdown("**MISSION STATUS**")
-st.sidebar.success("SIMULATION ONLINE")
-st.sidebar.markdown("**MONITORING CHANNELS**")
-st.sidebar.markdown(
-    "- Aircraft cabin illumination\n"
-    "- Aerospace laboratory illumination\n"
-    "- AI anomaly monitoring\n"
-    "- Predictive trend analysis"
-)
-st.sidebar.markdown("---")
-st.sidebar.markdown("**DEMONSTRATION LIMITS**")
-st.sidebar.metric("Cabin threshold", f"{CABIN_THRESHOLD} lux")
-st.sidebar.metric("Laboratory threshold", f"{LAB_THRESHOLD} lux")
-st.sidebar.caption("Illustrative software-demo values only.")
-
+# ----------------------- HEADER & THRESHOLDS -----------------------
 st.markdown(
     """
     <div class="hero">
       <div class="small-label">AEROSPACE ILLUMINATION MONITORING</div>
       <div class="hero-title">Aerospace Illumination Monitoring System</div>
-      <div class="hero-sub">Aircraft Cabin | Aerospace Laboratory · Software Simulation</div>
+      <div class="hero-sub">Real-Time Illumination Telemetry &amp; Threshold Supervision</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-head_left, head_right = st.columns([3, 1])
-with head_left:
-    st.markdown("### Mission Overview")
-    st.caption("Live simulated illumination telemetry and system condition.")
-with head_right:
-    st.markdown(
-        "<div style='text-align:right;color:#34d399;font-weight:700;padding-top:12px'>"
-        "● SIMULATION ACTIVE</div>",
-        unsafe_allow_html=True,
+thresh_1, thresh_2, thresh_3 = st.columns(3)
+with thresh_1:
+    st.metric("Minimum Safe Threshold", f"{ILLUMINATION_THRESHOLD} lux")
+with thresh_2:
+    st.metric("Warning Trigger Condition", f"< {ILLUMINATION_THRESHOLD} lux")
+with thresh_3:
+    st.metric("Full Scale Range", f"0 – {MAX_SCALE_LUX} lux")
+
+# ----------------------- INPUT CONTROL -----------------------
+with st.container(border=True):
+    st.markdown('<div class="section-kicker">01 / Input control</div>',
+                unsafe_allow_html=True)
+    st.subheader("Illumination Value Selector")
+    illumination_lux = st.number_input(
+        "Illumination level (lux)",
+        min_value=0,
+        max_value=2000,
+        value=350,
+        step=10,
+        key="illumination_input",
     )
 
-with st.container(border=True):
-    st.markdown('<div class="section-kicker">01 / Input controls</div>',
-                unsafe_allow_html=True)
-    st.subheader("Illumination Input Simulation")
-    input_left, input_right = st.columns(2)
-    with input_left:
-        st.markdown("**✈️ Aircraft Cabin**")
-        cabin_light = st.number_input(
-            "Cabin illumination (lux)", min_value=0, max_value=2000,
-            value=350, step=10, key="cabin_input"
-        )
-    with input_right:
-        st.markdown("**⌁ Aerospace Laboratory**")
-        lab_light = st.number_input(
-            "Laboratory illumination (lux)", min_value=0, max_value=2000,
-            value=600, step=10, key="lab_input"
-        )
-
-# One sample is captured each five-second rerun. Inputs are simulated/manual.
+# Capture one sample each refresh interval
 st.session_state.history.append({
     "Time": datetime.now().strftime("%H:%M:%S"),
-    "Aircraft Cabin": cabin_light,
-    "Laboratory": lab_light,
+    "Illumination": illumination_lux,
 })
 st.session_state.history = st.session_state.history[-100:]
 
-cabin_normal = cabin_light >= CABIN_THRESHOLD
-lab_normal = lab_light >= LAB_THRESHOLD
+is_normal = illumination_lux >= ILLUMINATION_THRESHOLD
+low_light_alert = not is_normal
 
-active_alerts = []
-if not cabin_normal:
-    active_alerts.append("Low Aircraft Cabin Illumination")
-if not lab_normal:
-    active_alerts.append("Low Aerospace Laboratory Illumination")
-
-# Record changes in alert state, not every refresh.
-if active_alerts != st.session_state.previous_alerts:
-    if active_alerts:
+if low_light_alert != st.session_state.previous_alert:
+    if low_light_alert:
         event_name = "EMERGENCY ALERT"
         severity = "CRITICAL"
         detection_method = "Threshold-Based Detection"
-        details = ", ".join(active_alerts)
+        details = f"Illumination ({illumination_lux} lux) below {ILLUMINATION_THRESHOLD} lux threshold"
     else:
         event_name = "SYSTEM RECOVERED"
         severity = "NORMAL"
         detection_method = "System Monitoring"
-        details = "All readings are above demonstration thresholds"
+        details = f"Illumination ({illumination_lux} lux) at or above {ILLUMINATION_THRESHOLD} lux threshold"
 
     st.session_state.alert_log.append({
         "Date & Time": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
         "Event": event_name,
         "Severity": severity,
         "Detection Method": detection_method,
-        "Cabin Illumination (lux)": cabin_light,
-        "Laboratory Illumination (lux)": lab_light,
+        "Illumination (lux)": illumination_lux,
         "Details": details,
     })
     st.session_state.alert_log = st.session_state.alert_log[-50:]
-    st.session_state.previous_alerts = active_alerts.copy()
+    st.session_state.previous_alert = low_light_alert
 
-if not active_alerts:
+if not low_light_alert:
     st.session_state.alarm_muted = False
 
-anomaly_result = detect_anomaly(cabin_light, lab_light)
+anomaly_result = detect_anomaly(illumination_lux)
 
+# ---------------- REAL-TIME MONITOR + GRAPH ------------------
+history_df = pd.DataFrame(st.session_state.history)
 
-
-# ---------------------- LIVE STATUS ----------------------
 with st.container(border=True):
-    st.markdown('<div class="section-kicker">03 / System condition</div>',
+    st.markdown('<div class="section-kicker">02 / Real-time monitor</div>',
                 unsafe_allow_html=True)
-    st.subheader("Live Monitoring Status")
+    st.subheader("Real-Time Monitor")
 
     if anomaly_result["combined_anomaly"]:
         st.error("🚨 ANOMALY DETECTED — REVIEW REQUIRED")
         if anomaly_result["threshold_anomaly"]:
             st.warning(
-                "Threshold detection: one or more readings are below the "
-                "configured demonstration limit."
+                f"Threshold detection: illumination is below {ILLUMINATION_THRESHOLD} lux."
             )
         if anomaly_result["ml_anomaly"]:
             st.warning(
-                "Isolation Forest: current reading differs from the "
-                "learned historical pattern."
+                "Isolation Forest: current reading differs from the learned historical pattern."
             )
     else:
         st.success("● AI MONITORING: NO ANOMALIES DETECTED")
 
-    status_left, status_right = st.columns(2)
-    with status_left:
-        st.markdown("**✈️ Aircraft Cabin**")
-        st.metric("Illumination intensity", f"{cabin_light} lux")
-        if cabin_normal:
-            st.success("CABIN STATUS: NORMAL")
+    monitor_left, monitor_right = st.columns([1, 2])
+    with monitor_left:
+        st.metric("Current Illumination", f"{illumination_lux} lux")
+        st.metric("Safety Threshold", f"{ILLUMINATION_THRESHOLD} lux")
+        if is_normal:
+            st.success("MONITOR STATUS: NORMAL")
         else:
-            st.error("CABIN STATUS: LOW")
+            st.error("MONITOR STATUS: LOW ILLUMINATION")
 
-    with status_right:
-        st.markdown("**⌁ Aerospace Laboratory**")
-        st.metric("Illumination intensity", f"{lab_light} lux")
-        if lab_normal:
-            st.success("LAB STATUS: NORMAL")
-        else:
-            st.error("LAB STATUS: LOW")
+    with monitor_right:
+        if not history_df.empty:
+            live_figure = go.Figure()
+            live_figure.add_trace(
+                go.Scatter(
+                    x=history_df["Time"],
+                    y=history_df["Illumination"],
+                    mode="lines+markers",
+                    name="Illumination (lux)",
+                    line={"color": CYAN, "width": 2.5},
+                    marker={"size": 5},
+                )
+            )
+            live_figure.add_hline(
+                y=ILLUMINATION_THRESHOLD,
+                line_dash="dash",
+                line_color=RED,
+                annotation_text=f"Threshold ({ILLUMINATION_THRESHOLD} lux)",
+                annotation_position="top left",
+            )
+            live_figure.update_layout(
+                title="Real-Time Monitoring Graph",
+                yaxis_title="Illumination (lux)",
+            )
+            st.plotly_chart(
+                style_plot(live_figure, 320),
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
 
-# ------------------------- GAUGES -------------------------
+# ------------------------- GAUGE -------------------------
 with st.container(border=True):
-    st.markdown('<div class="section-kicker">04 / Instrument panel</div>',
+    st.markdown('<div class="section-kicker">03 / Instrument gauge</div>',
                 unsafe_allow_html=True)
-    st.subheader("Illumination Monitoring Gauges")
-    gauge_left, gauge_right = st.columns(2)
-    with gauge_left:
-        st.plotly_chart(
-            create_gauge(cabin_light, "AIRCRAFT CABIN",
-                         CABIN_THRESHOLD, CYAN),
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
-    with gauge_right:
-        st.plotly_chart(
-            create_gauge(lab_light, "AEROSPACE LABORATORY",
-                         LAB_THRESHOLD, PURPLE),
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
-
-# -------------------- LIVE TELEMETRY ---------------------
-history_df = pd.DataFrame(st.session_state.history)
-with st.container(border=True):
-    st.markdown('<div class="section-kicker">05 / Live telemetry</div>',
-                unsafe_allow_html=True)
-    st.subheader("Illumination History — Real Time")
-    if not history_df.empty:
-        live_figure = go.Figure()
-        live_figure.add_trace(go.Scatter(
-            x=history_df["Time"], y=history_df["Aircraft Cabin"],
-            mode="lines+markers", name="Aircraft Cabin",
-            line={"color": CYAN, "width": 2.5}, marker={"size": 5},
-        ))
-        live_figure.add_trace(go.Scatter(
-            x=history_df["Time"], y=history_df["Laboratory"],
-            mode="lines+markers", name="Aerospace Laboratory",
-            line={"color": PURPLE, "width": 2.5}, marker={"size": 5},
-        ))
-        live_figure.update_layout(
-            title="Live Illumination (lux)", yaxis_title="Illumination (lux)"
-        )
-        st.plotly_chart(style_plot(live_figure, 360),
-                        use_container_width=True,
-                        config={"displayModeBar": False})
-
-
+    st.subheader("Illumination Gauge")
+    st.plotly_chart(
+        create_gauge(
+            illumination_lux,
+            "ILLUMINATION LEVEL",
+            ILLUMINATION_THRESHOLD,
+            CYAN,
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
 
 # -------------------- EMERGENCY PANEL --------------------
 with st.container(border=True):
-    st.markdown('<div class="section-kicker">07 / Emergency control</div>',
+    st.markdown('<div class="section-kicker">04 / Emergency control</div>',
                 unsafe_allow_html=True)
     st.subheader("Emergency Alert Control Center")
-    if active_alerts:
-        st.error("🚨 CRITICAL WARNING: LOW ILLUMINATION DETECTED")
-        for alert_text in active_alerts:
-            st.warning(alert_text)
-
+    if low_light_alert:
+        st.error(
+            f"🚨 CRITICAL WARNING: ILLUMINATION BELOW {ILLUMINATION_THRESHOLD} LUX"
+        )
         if not st.session_state.alarm_muted:
-            st.audio(create_alarm_sound(), format="audio/wav",
-                     autoplay=True, loop=True)
+            st.audio(
+                create_alarm_sound(),
+                format="audio/wav",
+                autoplay=True,
+                loop=True,
+            )
             if st.button("🔇 Silence Alarm"):
                 st.session_state.alarm_muted = True
                 st.rerun()
@@ -435,10 +391,8 @@ with st.container(border=True):
     else:
         st.success("ALL SYSTEMS NORMAL — NO ACTIVE THRESHOLD ALERT")
         st.caption(
-            "Both simulated readings are above their configured "
-            "demonstration thresholds."
+            f"Current illumination is at or above the {ILLUMINATION_THRESHOLD} lux threshold."
         )
-
 
 # ------------------------- FOOTER ------------------------
 st.markdown("---")
