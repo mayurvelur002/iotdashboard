@@ -1,11 +1,14 @@
 import io
+import json
 import math
 import struct
+import threading
 import wave
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import paho.mqtt.client as mqtt
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -15,7 +18,7 @@ from streamlit_autorefresh import st_autorefresh
 
 
 # =========================================================
-# AERO MISSION X | Software-only illumination simulation
+# AERO MISSION X | Wokwi MQTT + Illumination Simulation
 # =========================================================
 
 st.set_page_config(
@@ -92,6 +95,10 @@ st.markdown(
 CABIN_THRESHOLD = 100
 LAB_THRESHOLD = 300
 MAX_SCALE_LUX = 1000
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "aero-mission-x/dsu/illumination/lux"
+
 CYAN = "#22d3ee"
 PURPLE = "#c084fc"
 GREEN = "#34d399"
@@ -104,10 +111,63 @@ defaults = {
     "alert_log": [],
     "previous_alerts": [],
     "alarm_muted": False,
+    "use_mqtt": True,
 }
 for key, default_value in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
+
+
+# -------------------- MQTT SUBSCRIBER -------------------
+class MQTTLuxListener:
+    def __init__(self, broker: str, port: int, topic: str):
+        self.broker = broker
+        self.port = port
+        self.topic = topic
+        self.lock = threading.Lock()
+        self.latest_lux = None
+        self.last_seen = None
+        self.connected = False
+
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
+        self.client.connect_async(self.broker, self.port, keepalive=60)
+        self.client.loop_start()
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties):
+        with self.lock:
+            self.connected = True
+        client.subscribe(self.topic)
+
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
+        with self.lock:
+            self.connected = False
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            raw_text = msg.payload.decode("utf-8").strip()
+            data = json.loads(raw_text)
+            lux_val = int(round(float(data["lux"])))
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            try:
+                lux_val = int(round(float(raw_text)))
+            except ValueError:
+                return
+
+        with self.lock:
+            self.latest_lux = max(0, min(lux_val, 2000))
+            self.last_seen = datetime.now().strftime("%H:%M:%S")
+
+    def get_snapshot(self):
+        with self.lock:
+            return self.connected, self.latest_lux, self.last_seen
+
+
+@st.cache_resource
+def get_mqtt_listener():
+    return MQTTLuxListener(MQTT_BROKER, MQTT_PORT, MQTT_TOPIC)
 
 
 # ------------------------- HELPERS ----------------------
@@ -239,7 +299,10 @@ def create_dual_threshold_gauge(value, cabin_thresh, lab_thresh):
 
 
 # --------------------- AUTO REFRESH ----------------------
-st_autorefresh(interval=5000, limit=None, key="aero_refresh")
+st_autorefresh(interval=2000, limit=None, key="aero_refresh")
+
+listener = get_mqtt_listener()
+mqtt_connected, mqtt_lux, mqtt_last_seen = listener.get_snapshot()
 
 # ----------------------- HEADER & THRESHOLDS -----------------------
 st.markdown(
@@ -266,14 +329,37 @@ with st.container(border=True):
     st.markdown('<div class="section-kicker">01 / Input control</div>',
                 unsafe_allow_html=True)
     st.subheader("Illumination Value Selector")
-    illumination_lux = st.number_input(
-        "Illumination level (lux)",
-        min_value=0,
-        max_value=2000,
-        value=350,
-        step=10,
-        key="illumination_input",
+
+    use_mqtt = st.toggle(
+        "Receive live telemetry from Wokwi ESP32 via MQTT",
+        value=st.session_state.use_mqtt,
+        key="mqtt_toggle",
     )
+    st.session_state.use_mqtt = use_mqtt
+
+    if use_mqtt and mqtt_lux is not None:
+        illumination_lux = mqtt_lux
+        status_text = (
+            f"Connected to `{MQTT_BROKER}` on topic `{MQTT_TOPIC}` · "
+            f"Last Wokwi packet at `{mqtt_last_seen}`"
+            if mqtt_connected
+            else f"Reconnecting to `{MQTT_BROKER}` · Last received reading at `{mqtt_last_seen}`"
+        )
+        st.info(f"Live Wokwi Telemetry Active: **{illumination_lux} lux** — {status_text}")
+    else:
+        if use_mqtt:
+            st.warning(
+                f"Waiting for Wokwi ESP32 to publish to `{MQTT_TOPIC}` on `{MQTT_BROKER}`... "
+                f"Using manual selector below until first packet arrives."
+            )
+        illumination_lux = st.number_input(
+            "Illumination level (lux)",
+            min_value=0,
+            max_value=2000,
+            value=350,
+            step=10,
+            key="illumination_input",
+        )
 
 # Capture one sample each refresh interval
 st.session_state.history.append({
