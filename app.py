@@ -338,4 +338,146 @@ anomaly_result = detect_anomaly(illumination_lux)
 history_df = pd.DataFrame(st.session_state.history)
 
 with st.container(border=True):
-    st.
+    st.markdown('<div class="section-kicker">02 / Real-time monitor</div>',
+                unsafe_allow_html=True)
+    st.subheader("Real-Time Monitor")
+
+    if anomaly_result["combined_anomaly"]:
+        st.error("🚨 ANOMALY DETECTED — REVIEW REQUIRED")
+        if anomaly_result["threshold_anomaly"]:
+            st.warning(
+                f"Threshold detection: illumination ({illumination_lux} lux) is below "
+                f"one or both thresholds (Cabin: {CABIN_THRESHOLD} lux, Lab: {LAB_THRESHOLD} lux)."
+            )
+        if anomaly_result["ml_anomaly"]:
+            st.warning(
+                "Isolation Forest: current reading differs from the learned historical pattern."
+            )
+    else:
+        st.success("● AI MONITORING: NO ANOMALIES DETECTED")
+
+    monitor_left, monitor_right = st.columns([1, 2])
+    with monitor_left:
+        st.metric("Current Illumination", f"{illumination_lux} lux")
+        if cabin_ok:
+            st.success(f"CABIN ({CABIN_THRESHOLD} lux): NORMAL")
+        else:
+            st.error(f"CABIN ({CABIN_THRESHOLD} lux): ALERT (< {CABIN_THRESHOLD} lux)")
+
+        if lab_ok:
+            st.success(f"LABORATORY ({LAB_THRESHOLD} lux): NORMAL")
+        else:
+            st.warning(f"LABORATORY ({LAB_THRESHOLD} lux): ALERT (< {LAB_THRESHOLD} lux)")
+
+    with monitor_right:
+        if not history_df.empty:
+            live_figure = go.Figure()
+            live_figure.add_trace(
+                go.Scatter(
+                    x=history_df["Time"],
+                    y=history_df["Illumination"],
+                    mode="lines+markers",
+                    name="Illumination (lux)",
+                    line={"color": CYAN, "width": 2.5},
+                    marker={"size": 5},
+                )
+            )
+            live_figure.add_hline(
+                y=CABIN_THRESHOLD,
+                line_dash="dash",
+                line_color=CYAN,
+                annotation_text=f"Cabin ({CABIN_THRESHOLD} lux)",
+                annotation_position="bottom left",
+            )
+            live_figure.add_hline(
+                y=LAB_THRESHOLD,
+                line_dash="dot",
+                line_color=PURPLE,
+                annotation_text=f"Lab ({LAB_THRESHOLD} lux)",
+                annotation_position="top left",
+            )
+            live_figure.update_layout(
+                title="Real-Time Monitoring Graph",
+                yaxis_title="Illumination (lux)",
+            )
+            st.plotly_chart(
+                style_plot(live_figure, 320),
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
+
+# ------------------------- GAUGE -------------------------
+with st.container(border=True):
+    st.markdown('<div class="section-kicker">03 / Instrument gauge</div>',
+                unsafe_allow_html=True)
+    st.subheader("Dual-Threshold Illumination Gauge")
+    st.plotly_chart(
+        create_dual_threshold_gauge(
+            illumination_lux,
+            CABIN_THRESHOLD,
+            LAB_THRESHOLD,
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+    st.caption(
+        f"Cyan marker = Aircraft Cabin threshold ({CABIN_THRESHOLD} lux) · "
+        f"Purple marker = Aerospace Laboratory threshold ({LAB_THRESHOLD} lux)"
+    )
+
+# -------------------- EMERGENCY PANEL --------------------
+with st.container(border=True):
+    st.markdown('<div class="section-kicker">04 / Emergency control</div>',
+                unsafe_allow_html=True)
+    st.subheader("Emergency Alert Control Center")
+
+    alert_col_1, alert_col_2 = st.columns(2)
+    with alert_col_1:
+        st.markdown(f"**✈️ Aircraft Cabin Alert (< {CABIN_THRESHOLD} lux)**")
+        if not cabin_ok:
+            st.error(
+                f"CABIN ALERT ACTIVE: {illumination_lux} lux is below the "
+                f"{CABIN_THRESHOLD} lux cabin threshold."
+            )
+        else:
+            st.success(f"CABIN CLEAR: {illumination_lux} lux ≥ {CABIN_THRESHOLD} lux")
+
+    with alert_col_2:
+        st.markdown(f"**⌁ Aerospace Laboratory Alert (< {LAB_THRESHOLD} lux)**")
+        if not lab_ok:
+            st.warning(
+                f"LABORATORY ALERT ACTIVE: {illumination_lux} lux is below the "
+                f"{LAB_THRESHOLD} lux laboratory threshold."
+            )
+        else:
+            st.success(f"LABORATORY CLEAR: {illumination_lux} lux ≥ {LAB_THRESHOLD} lux")
+
+    if active_alerts:
+        if not st.session_state.alarm_muted:
+            st.audio(
+                create_alarm_sound(),
+                format="audio/wav",
+                autoplay=True,
+                loop=True,
+            )
+            if st.button("🔇 Silence Alarm"):
+                st.session_state.alarm_muted = True
+                st.rerun()
+        else:
+            st.info("Alarm muted. Visual threshold alerts remain active.")
+            if st.button("🔊 Re-enable Alarm"):
+                st.session_state.alarm_muted = False
+                st.rerun()
+    else:
+        st.success("ALL THRESHOLDS SATISFIED — NO ACTIVE ALERTS")
+
+# ------------------------- FOOTER ------------------------
+st.markdown("---")
+st.markdown(
+    "<div style='text-align:center;color:#829bb5;font-size:.78rem'>"
+    "AERO MISSION X · Aerospace Illumination Monitoring System<br>"
+    "Software-based sensor simulation · Demonstration thresholds only · "
+    "Not certified for aviation use"
+    "</div>",
+    unsafe_allow_html=True,
+)
