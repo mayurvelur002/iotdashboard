@@ -89,18 +89,20 @@ st.markdown(
 )
 
 # ---------------------- CONSTANTS -----------------------
-ILLUMINATION_THRESHOLD = 200
+CABIN_THRESHOLD = 100
+LAB_THRESHOLD = 300
 MAX_SCALE_LUX = 1000
 CYAN = "#22d3ee"
 PURPLE = "#c084fc"
 GREEN = "#34d399"
 RED = "#fb7185"
+AMBER = "#fbbf24"
 
 # -------------------- SESSION STATE ---------------------
 defaults = {
     "history": [],
     "alert_log": [],
-    "previous_alert": None,
+    "previous_alerts": [],
     "alarm_muted": False,
 }
 for key, default_value in defaults.items():
@@ -131,7 +133,10 @@ def create_alarm_sound():
 
 
 def detect_anomaly(illumination_value):
-    threshold_anomaly = illumination_value < ILLUMINATION_THRESHOLD
+    threshold_anomaly = (
+        illumination_value < CABIN_THRESHOLD
+        or illumination_value < LAB_THRESHOLD
+    )
     ml_anomaly = False
 
     history = st.session_state.history
@@ -175,30 +180,53 @@ def style_plot(figure, height=320):
     return figure
 
 
-def create_gauge(value, title, threshold, accent):
+def create_dual_threshold_gauge(value, cabin_thresh, lab_thresh):
     safe_value = max(0, min(float(value), MAX_SCALE_LUX))
-    bar_color = GREEN if value >= threshold else RED
+    low_bound = min(cabin_thresh, lab_thresh)
+    high_bound = max(cabin_thresh, lab_thresh)
+
+    if value >= high_bound:
+        bar_color = GREEN
+    elif value >= low_bound:
+        bar_color = AMBER
+    else:
+        bar_color = RED
+
     figure = go.Figure(
         go.Indicator(
             mode="gauge+number",
             value=safe_value,
-            title={"text": title, "font": {"size": 15, "color": "#dcecff"}},
-            number={"suffix": " lux", "font": {"size": 27, "color": "#f4faff"}},
+            title={
+                "text": (
+                    f"ILLUMINATION LEVEL "
+                    f"(Cabin: {cabin_thresh} lx | Lab: {lab_thresh} lx)"
+                ),
+                "font": {"size": 14, "color": "#dcecff"},
+            },
+            number={"suffix": " lux", "font": {"size": 28, "color": "#f4faff"}},
             gauge={
                 "axis": {"range": [0, MAX_SCALE_LUX], "tickcolor": "#8fa9c5"},
-                "bar": {"color": bar_color, "thickness": 0.24},
+                "bar": {"color": bar_color, "thickness": 0.25},
                 "bgcolor": "#10243a",
                 "borderwidth": 1,
                 "bordercolor": "rgba(34,211,238,.25)",
                 "steps": [
-                    {"range": [0, threshold], "color": "rgba(251,113,133,.18)"},
-                    {"range": [threshold, MAX_SCALE_LUX], "color": "rgba(52,211,153,.12)"},
+                    {"range": [0, low_bound], "color": "rgba(251,113,133,.20)"},
+                    {"range": [low_bound, high_bound], "color": "rgba(251,191,36,.15)"},
+                    {"range": [high_bound, MAX_SCALE_LUX], "color": "rgba(52,211,153,.12)"},
                 ],
-                "threshold": {
-                    "line": {"color": accent, "width": 3},
-                    "thickness": 0.8,
-                    "value": threshold,
-                },
+                "threshold": [
+                    {
+                        "line": {"color": CYAN, "width": 3},
+                        "thickness": 0.85,
+                        "value": cabin_thresh,
+                    },
+                    {
+                        "line": {"color": PURPLE, "width": 3},
+                        "thickness": 0.85,
+                        "value": lab_thresh,
+                    },
+                ],
             },
         )
     )
@@ -206,8 +234,8 @@ def create_gauge(value, title, threshold, accent):
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=270,
-        margin={"t": 45, "b": 10, "l": 20, "r": 20},
+        height=280,
+        margin={"t": 50, "b": 10, "l": 20, "r": 20},
         font={"color": "#dcecff"},
     )
     return figure
@@ -222,7 +250,7 @@ st.markdown(
     <div class="hero">
       <div class="small-label">AEROSPACE ILLUMINATION MONITORING</div>
       <div class="hero-title">Aerospace Illumination Monitoring System</div>
-      <div class="hero-sub">Real-Time Illumination Telemetry &amp; Threshold Supervision</div>
+      <div class="hero-sub">Real-Time Illumination Telemetry &amp; Dual-Threshold Supervision</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -230,11 +258,11 @@ st.markdown(
 
 thresh_1, thresh_2, thresh_3 = st.columns(3)
 with thresh_1:
-    st.metric("Minimum Safe Threshold", f"{ILLUMINATION_THRESHOLD} lux")
+    st.metric("Aircraft Cabin Threshold", f"{CABIN_THRESHOLD} lux")
 with thresh_2:
-    st.metric("Warning Trigger Condition", f"< {ILLUMINATION_THRESHOLD} lux")
+    st.metric("Aerospace Laboratory Threshold", f"{LAB_THRESHOLD} lux")
 with thresh_3:
-    st.metric("Full Scale Range", f"0 – {MAX_SCALE_LUX} lux")
+    st.metric("Gauge Scale Range", f"0 – {MAX_SCALE_LUX} lux")
 
 # ----------------------- INPUT CONTROL -----------------------
 with st.container(border=True):
@@ -257,20 +285,33 @@ st.session_state.history.append({
 })
 st.session_state.history = st.session_state.history[-100:]
 
-is_normal = illumination_lux >= ILLUMINATION_THRESHOLD
-low_light_alert = not is_normal
+cabin_ok = illumination_lux >= CABIN_THRESHOLD
+lab_ok = illumination_lux >= LAB_THRESHOLD
 
-if low_light_alert != st.session_state.previous_alert:
-    if low_light_alert:
+active_alerts = []
+if not cabin_ok:
+    active_alerts.append(
+        f"Aircraft Cabin Alert: Illumination ({illumination_lux} lux) is below {CABIN_THRESHOLD} lux"
+    )
+if not lab_ok:
+    active_alerts.append(
+        f"Aerospace Laboratory Alert: Illumination ({illumination_lux} lux) is below {LAB_THRESHOLD} lux"
+    )
+
+if active_alerts != st.session_state.previous_alerts:
+    if active_alerts:
         event_name = "EMERGENCY ALERT"
         severity = "CRITICAL"
-        detection_method = "Threshold-Based Detection"
-        details = f"Illumination ({illumination_lux} lux) below {ILLUMINATION_THRESHOLD} lux threshold"
+        detection_method = "Dual-Threshold Detection"
+        details = " | ".join(active_alerts)
     else:
         event_name = "SYSTEM RECOVERED"
         severity = "NORMAL"
         detection_method = "System Monitoring"
-        details = f"Illumination ({illumination_lux} lux) at or above {ILLUMINATION_THRESHOLD} lux threshold"
+        details = (
+            f"Illumination ({illumination_lux} lux) meets both "
+            f"{CABIN_THRESHOLD} lux (Cabin) and {LAB_THRESHOLD} lux (Lab) thresholds"
+        )
 
     st.session_state.alert_log.append({
         "Date & Time": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
@@ -281,9 +322,9 @@ if low_light_alert != st.session_state.previous_alert:
         "Details": details,
     })
     st.session_state.alert_log = st.session_state.alert_log[-50:]
-    st.session_state.previous_alert = low_light_alert
+    st.session_state.previous_alerts = active_alerts.copy()
 
-if not low_light_alert:
+if not active_alerts:
     st.session_state.alarm_muted = False
 
 anomaly_result = detect_anomaly(illumination_lux)
@@ -300,7 +341,8 @@ with st.container(border=True):
         st.error("🚨 ANOMALY DETECTED — REVIEW REQUIRED")
         if anomaly_result["threshold_anomaly"]:
             st.warning(
-                f"Threshold detection: illumination is below {ILLUMINATION_THRESHOLD} lux."
+                f"Threshold detection: illumination ({illumination_lux} lux) is below "
+                f"one or both thresholds (Cabin: {CABIN_THRESHOLD} lux, Lab: {LAB_THRESHOLD} lux)."
             )
         if anomaly_result["ml_anomaly"]:
             st.warning(
@@ -312,11 +354,15 @@ with st.container(border=True):
     monitor_left, monitor_right = st.columns([1, 2])
     with monitor_left:
         st.metric("Current Illumination", f"{illumination_lux} lux")
-        st.metric("Safety Threshold", f"{ILLUMINATION_THRESHOLD} lux")
-        if is_normal:
-            st.success("MONITOR STATUS: NORMAL")
+        if cabin_ok:
+            st.success(f"CABIN ({CABIN_THRESHOLD} lux): NORMAL")
         else:
-            st.error("MONITOR STATUS: LOW ILLUMINATION")
+            st.error(f"CABIN ({CABIN_THRESHOLD} lux): ALERT (< {CABIN_THRESHOLD} lux)")
+
+        if lab_ok:
+            st.success(f"LABORATORY ({LAB_THRESHOLD} lux): NORMAL")
+        else:
+            st.warning(f"LABORATORY ({LAB_THRESHOLD} lux): ALERT (< {LAB_THRESHOLD} lux)")
 
     with monitor_right:
         if not history_df.empty:
@@ -332,10 +378,17 @@ with st.container(border=True):
                 )
             )
             live_figure.add_hline(
-                y=ILLUMINATION_THRESHOLD,
+                y=CABIN_THRESHOLD,
                 line_dash="dash",
-                line_color=RED,
-                annotation_text=f"Threshold ({ILLUMINATION_THRESHOLD} lux)",
+                line_color=CYAN,
+                annotation_text=f"Cabin ({CABIN_THRESHOLD} lux)",
+                annotation_position="bottom left",
+            )
+            live_figure.add_hline(
+                y=LAB_THRESHOLD,
+                line_dash="dot",
+                line_color=PURPLE,
+                annotation_text=f"Lab ({LAB_THRESHOLD} lux)",
                 annotation_position="top left",
             )
             live_figure.update_layout(
@@ -352,16 +405,19 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown('<div class="section-kicker">03 / Instrument gauge</div>',
                 unsafe_allow_html=True)
-    st.subheader("Illumination Gauge")
+    st.subheader("Dual-Threshold Illumination Gauge")
     st.plotly_chart(
-        create_gauge(
+        create_dual_threshold_gauge(
             illumination_lux,
-            "ILLUMINATION LEVEL",
-            ILLUMINATION_THRESHOLD,
-            CYAN,
+            CABIN_THRESHOLD,
+            LAB_THRESHOLD,
         ),
         use_container_width=True,
         config={"displayModeBar": False},
+    )
+    st.caption(
+        f"Cyan marker = Aircraft Cabin threshold ({CABIN_THRESHOLD} lux) · "
+        f"Purple marker = Aerospace Laboratory threshold ({LAB_THRESHOLD} lux)"
     )
 
 # -------------------- EMERGENCY PANEL --------------------
@@ -369,10 +425,29 @@ with st.container(border=True):
     st.markdown('<div class="section-kicker">04 / Emergency control</div>',
                 unsafe_allow_html=True)
     st.subheader("Emergency Alert Control Center")
-    if low_light_alert:
-        st.error(
-            f"🚨 CRITICAL WARNING: ILLUMINATION BELOW {ILLUMINATION_THRESHOLD} LUX"
-        )
+
+    alert_col_1, alert_col_2 = st.columns(2)
+    with alert_col_1:
+        st.markdown(f"**✈️ Aircraft Cabin Alert (< {CABIN_THRESHOLD} lux)**")
+        if not cabin_ok:
+            st.error(
+                f"CABIN ALERT ACTIVE: {illumination_lux} lux is below the "
+                f"{CABIN_THRESHOLD} lux cabin threshold."
+            )
+        else:
+            st.success(f"CABIN CLEAR: {illumination_lux} lux ≥ {CABIN_THRESHOLD} lux")
+
+    with alert_col_2:
+        st.markdown(f"**⌁ Aerospace Laboratory Alert (< {LAB_THRESHOLD} lux)**")
+        if not lab_ok:
+            st.warning(
+                f"LABORATORY ALERT ACTIVE: {illumination_lux} lux is below the "
+                f"{LAB_THRESHOLD} lux laboratory threshold."
+            )
+        else:
+            st.success(f"LABORATORY CLEAR: {illumination_lux} lux ≥ {LAB_THRESHOLD} lux")
+
+    if active_alerts:
         if not st.session_state.alarm_muted:
             st.audio(
                 create_alarm_sound(),
@@ -384,15 +459,12 @@ with st.container(border=True):
                 st.session_state.alarm_muted = True
                 st.rerun()
         else:
-            st.info("Alarm muted. Visual emergency alerts remain active.")
+            st.info("Alarm muted. Visual threshold alerts remain active.")
             if st.button("🔊 Re-enable Alarm"):
                 st.session_state.alarm_muted = False
                 st.rerun()
     else:
-        st.success("ALL SYSTEMS NORMAL — NO ACTIVE THRESHOLD ALERT")
-        st.caption(
-            f"Current illumination is at or above the {ILLUMINATION_THRESHOLD} lux threshold."
-        )
+        st.success("ALL THRESHOLDS SATISFIED — NO ACTIVE ALERTS")
 
 # ------------------------- FOOTER ------------------------
 st.markdown("---")
