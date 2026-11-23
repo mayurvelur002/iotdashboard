@@ -238,4 +238,104 @@ def create_dual_threshold_gauge(value, cabin_thresh, lab_thresh):
     figure.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=290,
+        margin={"t": 50, "b": 25, "l": 20, "r": 20},
+        font={"color": "#dcecff"},
+    )
+    return figure
+
+
+# --------------------- AUTO REFRESH ----------------------
+st_autorefresh(interval=5000, limit=None, key="aero_refresh")
+
+# ----------------------- HEADER & THRESHOLDS -----------------------
+st.markdown(
+    """
+    <div class="hero">
+      <div class="small-label">AEROSPACE ILLUMINATION MONITORING</div>
+      <div class="hero-title">Aerospace Illumination Monitoring System</div>
+      <div class="hero-sub">Real-Time Illumination Telemetry &amp; Dual-Threshold Supervision</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+thresh_1, thresh_2, thresh_3 = st.columns(3)
+with thresh_1:
+    st.metric("Aircraft Cabin Threshold", f"{CABIN_THRESHOLD} lux")
+with thresh_2:
+    st.metric("Aerospace Laboratory Threshold", f"{LAB_THRESHOLD} lux")
+with thresh_3:
+    st.metric("Gauge Scale Range", f"0 – {MAX_SCALE_LUX} lux")
+
+# ----------------------- INPUT CONTROL -----------------------
+with st.container(border=True):
+    st.markdown('<div class="section-kicker">01 / Input control</div>',
+                unsafe_allow_html=True)
+    st.subheader("Illumination Value Selector")
+    illumination_lux = st.number_input(
+        "Illumination level (lux)",
+        min_value=0,
+        max_value=2000,
+        value=350,
+        step=10,
+        key="illumination_input",
+    )
+
+# Capture one sample each refresh interval
+st.session_state.history.append({
+    "Time": datetime.now().strftime("%H:%M:%S"),
+    "Illumination": illumination_lux,
+})
+st.session_state.history = st.session_state.history[-100:]
+
+cabin_ok = illumination_lux >= CABIN_THRESHOLD
+lab_ok = illumination_lux >= LAB_THRESHOLD
+
+active_alerts = []
+if not cabin_ok:
+    active_alerts.append(
+        f"Aircraft Cabin Alert: Illumination ({illumination_lux} lux) is below {CABIN_THRESHOLD} lux"
+    )
+if not lab_ok:
+    active_alerts.append(
+        f"Aerospace Laboratory Alert: Illumination ({illumination_lux} lux) is below {LAB_THRESHOLD} lux"
+    )
+
+if active_alerts != st.session_state.previous_alerts:
+    if active_alerts:
+        event_name = "EMERGENCY ALERT"
+        severity = "CRITICAL"
+        detection_method = "Dual-Threshold Detection"
+        details = " | ".join(active_alerts)
+    else:
+        event_name = "SYSTEM RECOVERED"
+        severity = "NORMAL"
+        detection_method = "System Monitoring"
+        details = (
+            f"Illumination ({illumination_lux} lux) meets both "
+            f"{CABIN_THRESHOLD} lux (Cabin) and {LAB_THRESHOLD} lux (Lab) thresholds"
+        )
+
+    st.session_state.alert_log.append({
+        "Date & Time": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
+        "Event": event_name,
+        "Severity": severity,
+        "Detection Method": detection_method,
+        "Illumination (lux)": illumination_lux,
+        "Details": details,
+    })
+    st.session_state.alert_log = st.session_state.alert_log[-50:]
+    st.session_state.previous_alerts = active_alerts.copy()
+
+if not active_alerts:
+    st.session_state.alarm_muted = False
+
+anomaly_result = detect_anomaly(illumination_lux)
+
+# ---------------- REAL-TIME MONITOR + GRAPH ------------------
+history_df = pd.DataFrame(st.session_state.history)
+
+with st.container(border=True):
+    st.
