@@ -120,29 +120,29 @@ def play_alert_sound(severity: str, pulse_id: int):
 
 
 def classify_raw_state(lux: float, mode: str) -> tuple[str, str]:
-    """Returns (STATE, reason) aligned with Member 4's aerospace lighting tables."""
+    """Returns (STATE, reason) aligned with aerospace lighting threshold bands."""
     if mode == "Lab / test bench":
         if 500.0 <= lux <= 1000.0:
-            return "NORMAL", "Within 500–1000 lux task band (EN 12464-1 / CIBSE SLL Guide 1)"[cite: 2]
+            return "NORMAL", "Within 500–1000 lux task band (EN 12464-1 / CIBSE SLL Guide 1)"
         if (300.0 <= lux < 500.0) or (1000.0 < lux <= 1500.0):
-            detail = "Too dim (< 500 lux)" if lux < 500.0 else "High illuminance (> 1000–1500 lux)"[cite: 2]
+            detail = "Too dim (< 500 lux)" if lux < 500.0 else "High illuminance (> 1000–1500 lux)"
             return "WARNING", detail
-        return "EMERGENCY", "Outside lab limits (< 300 lux or > 1500 lux)"[cite: 2]
+        return "EMERGENCY", "Outside lab limits (< 300 lux or > 1500 lux)"
 
     if mode == "Cabin: boarding / taxi":
         if 300.0 <= lux <= 500.0:
-            return "NORMAL", "Within 300–500 lux boarding/taxi design band"[cite: 2]
+            return "NORMAL", "Within 300–500 lux boarding/taxi design band"
         if (150.0 <= lux < 300.0) or (500.0 < lux <= 700.0):
-            detail = "Too dim (< 300 lux)" if lux < 300.0 else "Too bright (> 500–700 lux)"[cite: 2]
+            detail = "Too dim (< 300 lux)" if lux < 300.0 else "Too bright (> 500–700 lux)"
             return "WARNING", detail
-        return "EMERGENCY", "Outside boarding/taxi limits (< 150 lux or > 700 lux)"[cite: 2]
+        return "EMERGENCY", "Outside boarding/taxi limits (< 150 lux or > 700 lux)"
 
     # Mode 3: Cabin: night cruise
     if 0.0 <= lux <= 50.0:
-        return "NORMAL", "Within 0–50 lux night-cruise comfort band"[cite: 2]
+        return "NORMAL", "Within 0–50 lux night-cruise comfort band"
     if 50.0 < lux <= 100.0:
-        return "WARNING", "Above 50 lux (may disturb sleep physiology)"[cite: 2]
-    return "EMERGENCY", "Exceeds 100 lux night-cruise ceiling"[cite: 2]
+        return "WARNING", "Above 50 lux (may disturb sleep physiology)"
+    return "EMERGENCY", "Exceeds 100 lux night-cruise ceiling"
 
 
 def apply_filtering(
@@ -191,7 +191,7 @@ def apply_filtering(
 
 def main():
     st.title("✈️ Aerospace Cabin & Lab Illumination Monitor")
-    st.caption("Aligned with EN 12464-1, CIBSE SLL Guide 1, and cabin illumination bands")[cite: 2]
+    st.caption("Aligned with EN 12464-1, CIBSE SLL Guide 1, and cabin illumination bands")
 
     listener = get_listener()
     mqtt_lux, last_ts, mqtt_ok = listener.snapshot()
@@ -208,7 +208,7 @@ def main():
             manual_lux = st.slider("Manual Lux Input", 0.0, 2000.0, 600.0, step=1.0)
 
         st.divider()
-        st.subheader("Filtering & Timing (Design Values)")[cite: 2]
+        st.subheader("Filtering & Timing (Design Values)")
         hysteresis_pct = st.slider("Boundary Hysteresis (%)", 0.0, 15.0, 5.0, step=0.5)
         debounce_s = st.slider("State Debounce (s)", 0.0, 10.0, 2.5, step=0.5)
         persistence_s = st.slider("WARNING → EMERGENCY Persistence (s)", 30, 180, 30, step=5)
@@ -228,7 +228,6 @@ def main():
     raw_state, reason = classify_raw_state(active_lux, mode)
     final_state, filter_info = apply_filtering(raw_state, debounce_s, persistence_s, hysteresis_pct)
 
-    # Play alert tone on WARNING or EMERGENCY (throttled to avoid spamming every rerun)
     now = time.time()
     if sound_enabled and final_state in ("WARNING", "EMERGENCY") and (now - st.session_state.last_sound_ts >= 3.0):
         st.session_state.last_sound_ts = now
