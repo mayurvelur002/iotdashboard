@@ -119,7 +119,7 @@ def play_alert_sound(severity: str, pulse_id: int):
     )
 
 
-def classify_raw_state(lux: float, mode: str) -> tuple[str, str]:
+def classify_state(lux: float, mode: str) -> tuple[str, str]:
     """Returns (STATE, reason) aligned with aerospace lighting threshold bands."""
     if mode == "Lab / test bench":
         if 500.0 <= lux <= 1000.0:
@@ -145,50 +145,6 @@ def classify_raw_state(lux: float, mode: str) -> tuple[str, str]:
     return "EMERGENCY", "Exceeds 100 lux night-cruise ceiling"
 
 
-def apply_filtering(
-    raw_state: str,
-    debounce_s: float,
-    persistence_s: float,
-    hysteresis_pct: float,
-) -> tuple[str, str]:
-    now = time.time()
-    ss = st.session_state
-
-    if "committed_state" not in ss:
-        ss.committed_state = raw_state
-        ss.candidate_state = raw_state
-        ss.candidate_since = now
-        ss.warning_since = now if raw_state == "WARNING" else None
-
-    hysteresis_note = f"Hysteresis ±{hysteresis_pct:.1f}%"
-    if raw_state != ss.committed_state:
-        if ss.candidate_state != raw_state:
-            ss.candidate_state = raw_state
-            ss.candidate_since = now
-
-        elapsed_candidate = now - ss.candidate_since
-        if elapsed_candidate >= debounce_s:
-            if ss.committed_state == "WARNING" and raw_state == "EMERGENCY":
-                if ss.warning_since is None:
-                    ss.warning_since = now
-                if (now - ss.warning_since) >= persistence_s:
-                    ss.committed_state = "EMERGENCY"
-                    ss.warning_since = None
-                else:
-                    rem = max(0.0, persistence_s - (now - ss.warning_since))
-                    return ss.committed_state, f"WARNING escalating to EMERGENCY in {rem:.0f}s ({hysteresis_note})"
-            else:
-                ss.committed_state = raw_state
-                ss.warning_since = now if raw_state == "WARNING" else None
-    else:
-        ss.candidate_state = raw_state
-        ss.candidate_since = now
-        if raw_state != "WARNING":
-            ss.warning_since = None
-
-    return ss.committed_state, f"Debounced ({debounce_s:.1f}s) • {hysteresis_note}"
-
-
 def main():
     st.title("✈️ Aerospace Cabin & Lab Illumination Monitor")
     st.caption("Aligned with EN 12464-1, CIBSE SLL Guide 1, and cabin illumination bands")
@@ -196,24 +152,28 @@ def main():
     listener = get_listener()
     mqtt_lux, last_ts, mqtt_ok = listener.snapshot()
 
-    with st.sidebar:
-        st.header("Operating Mode & Telemetry")
+    # Main center controls (no sidebar)
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
+    with ctrl_col1:
         mode = st.selectbox("Operating Mode", MODES, index=0)
-        live_mqtt = st.toggle("Receive live telemetry from Wokwi ESP32 via MQTT", value=True)
+    with ctrl_col2:
+        live_mqtt = st.toggle("Live MQTT (Wokwi ESP32)", value=True)
+    with ctrl_col3:
         sound_enabled = st.toggle("Enable Alert Sound", value=True)
 
-        if live_mqtt:
-            manual_lux = st.slider("Fallback / Test Lux (when no recent packet)", 0.0, 2000.0, 600.0, step=1.0)
-        else:
-            manual_lux = st.slider("Manual Lux Input", 0.0, 2000.0, 600.0, step=1.0)
+    slider_label = (
+        "Fallback / Test Lux (used when no recent MQTT packet arrives)"
+        if live_mqtt
+        else "Manual Lux Input"
+    )
+    manual_lux = st.slider(slider_label, min_value=0.0, max_value=2000.0, value=600.0, step=1.0)
 
-        st.divider()
-        st.subheader("Filtering & Timing (Design Values)")
-        hysteresis_pct = st.slider("Boundary Hysteresis (%)", 0.0, 15.0, 5.0, step=0.5)
-        debounce_s = st.slider("State Debounce (s)", 0.0, 10.0, 2.5, step=0.5)
-        persistence_s = st.slider("WARNING → EMERGENCY Persistence (s)", 30, 180, 30, step=5)
-
-    fresh_mqtt = live_mqtt and (mqtt_lux is not None) and (last_ts is not None) and ((time.time() - last_ts) <= 10.0)
+    fresh_mqtt = (
+        live_mqtt
+        and (mqtt_lux is not None)
+        and (last_ts is not None)
+        and ((time.time() - last_ts) <= 10.0)
+    )
     active_lux = float(mqtt_lux) if fresh_mqtt else float(manual_lux)
 
     if "history" not in st.session_state:
@@ -225,25 +185,24 @@ def main():
     if "last_sound_ts" not in st.session_state:
         st.session_state.last_sound_ts = 0.0
 
-    raw_state, reason = classify_raw_state(active_lux, mode)
-    final_state, filter_info = apply_filtering(raw_state, debounce_s, persistence_s, hysteresis_pct)
+    state, reason = classify_state(active_lux, mode)
 
     now = time.time()
-    if sound_enabled and final_state in ("WARNING", "EMERGENCY") and (now - st.session_state.last_sound_ts >= 3.0):
+    if sound_enabled and state in ("WARNING", "EMERGENCY") and (now - st.session_state.last_sound_ts >= 3.0):
         st.session_state.last_sound_ts = now
         st.session_state.alert_pulse += 1
-        play_alert_sound(final_state, st.session_state.alert_pulse)
+        play_alert_sound(state, st.session_state.alert_pulse)
 
-    if final_state == "NORMAL":
-        st.success(f"🟢 **NORMAL** — {reason}  |  *{filter_info}*")
-    elif final_state == "WARNING":
-        st.warning(f"🟡 **WARNING** — {reason}  |  *{filter_info}*")
+    if state == "NORMAL":
+        st.success(f"🟢 **NORMAL** — {reason}")
+    elif state == "WARNING":
+        st.warning(f"🟡 **WARNING** — {reason}")
     else:
-        st.error(f"🔴 **EMERGENCY** — {reason}  |  *{filter_info}*")
+        st.error(f"🔴 **EMERGENCY** — {reason}")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Active Illuminance", f"{active_lux:.2f} lux")
-    c2.metric("Active State", final_state)
+    c2.metric("Active State", state)
     c3.metric("Operating Mode", mode)
     c4.metric(
         "MQTT Broker Link",
